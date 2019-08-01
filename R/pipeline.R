@@ -116,14 +116,14 @@ dadaMulti <- function(MA, mc.cores=getOption("mc.cores", 1L),
     .complainWhenAbsent(MA, "derep")
     exp.args <- .extractEllipsis(list(...), nrow(MA))
     ## needs to be computed on pairs of amplicons
-    PPdada <- mclapply(seq_along(MA@PrimerPairsSet), function (i){
+    f <- function (i){
        dF <- getDerepF(MA[i, ])
        dR <- getDerepR(MA[i, ])
        message("\n\namplicon ", names(MA@PrimerPairsSet)[i],
            ": dada estimation of sequence variants from ",
             length(dF), " of ",
            length(MA@PairedReadFileSet), " possible sample files")
-       if(length(dF)>0 && length(dR)>0){
+       if (length(dF)>0 && length(dR)>0){
            ## run functions for reverse and forward
            ## work on possilbe different paramters for this particular amplicon
            args.here <- lapply(exp.args, "[", i)
@@ -144,7 +144,14 @@ dadaMulti <- function(MA, mc.cores=getOption("mc.cores", 1L),
            message("\nskipping empty amplicon")
        }
        return(Pdada)
-    }, mc.cores=mc.cores)
+    }
+    if (Sys.info()["sysname"] == "Windows") {
+      cl <- makeCluster(mc.cores)
+      PPdada <- parLapply(cl, seq_along(MA@PrimerPairsSet), f)
+      stopCluster(cl)
+    }
+    else  
+      PPdada <- mclapply(seq_along(MA@PrimerPairsSet), f, mc.cores=mc.cores)
     names(PPdada) <- names(MA@PrimerPairsSet)
     initialize(MA, dada = PPdada)
 }
