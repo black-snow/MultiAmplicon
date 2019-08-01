@@ -31,13 +31,14 @@
 ##'     derepF and reverse derepR) filled.
 ##' @importFrom dada2 derepFastq
 ##' @importFrom parallel mclapply
+##' @importFrom parallel parLapply
 ##' @export
 ##' @author Emanuel Heitlinger
 derepMulti <- function(MA, mc.cores = getOption("mc.cores", 1L),
                        keep.single.singlets = FALSE, ...){
     .complainWhenAbsent(MA, "stratifiedFiles")
-    exp.args <- .extractEllipsis(list(...), nrow(MA))    
-    PPderep <- mclapply(seq_along(MA@PrimerPairsSet), function (i){
+    exp.args <- .extractEllipsis(list(...), nrow(MA)) 
+    f <- function (i){
         ## work on possilbe different paramters for this particular amplicon
         args.here <- lapply(exp.args, "[", i)
         .paramMessage("derepFastq", args.here)
@@ -72,7 +73,14 @@ derepMulti <- function(MA, mc.cores = getOption("mc.cores", 1L),
                 derepR = derepR[[w]])
         })
         return(Pderep)
-    }, mc.cores = mc.cores)
+    }
+    if (Sys.info()["sysname"] == "Windows") {
+      cl <- makeCluster(mc.cores)
+      PPderep <- parLapply(cl, seq_along(MA@PrimerPairsSet), f)
+      stopCluster(cl)
+    }
+    else
+      PPderep <- mclapply(seq_along(MA@PrimerPairsSet), f, mc.cores = mc.cores)
     names(PPderep) <- names(MA@PrimerPairsSet)
     initialize(MA, derep = PPderep)
 }
@@ -109,6 +117,7 @@ derepMulti <- function(MA, mc.cores = getOption("mc.cores", 1L),
 ##' @importFrom dada2 dada
 ##' @importFrom methods initialize new slot
 ##' @importFrom parallel mclapply
+##' @importFrom parallel parLapply
 ##' @export
 ##' @author Emanuel Heitlinger
 dadaMulti <- function(MA, mc.cores=getOption("mc.cores", 1L),
@@ -184,12 +193,13 @@ dadaMulti <- function(MA, mc.cores=getOption("mc.cores", 1L),
 ##' @return A MultiAmplicon-class object with the mergers slot filled.
 ##' @importFrom dada2 mergePairs
 ##' @importFrom parallel mclapply
+##' @importFrom parallel parLapply
 ##' @export
 ##' @author Emanuel Heitlinger
 mergeMulti <- function(MA, mc.cores=getOption("mc.cores", 1L), ...){
     .complainWhenAbsent(MA, "dada")
     exp.args <- .extractEllipsis(list(...), nrow(MA))
-    mergers <- mclapply(seq_along(MA@PrimerPairsSet), function (i){     
+    f <- function (i){     
         daF <- getDadaF(MA[i, ])
         daR <- getDadaR(MA[i, ])
         deF <- getDerepF(MA[i, ])
@@ -206,7 +216,14 @@ mergeMulti <- function(MA, mc.cores=getOption("mc.cores", 1L), ...){
             ## correct the case of one sample / amplicon 
             if(class(MP)%in%"data.frame"){MP <- list(MP)}
         return(MP)
-    }, mc.cores=mc.cores)
+    }
+    if (Sys.info()["sysname"] == "Windows") {
+      cl <- makeCluster(mc.cores)
+      mergers <- parLapply(cl, seq_along(MA@PrimerPairsSet), f)
+      stopCluster(cl)
+    }
+    else
+      mergers <- mclapply(seq_along(MA@PrimerPairsSet), f, mc.cores=mc.cores)
     names(mergers) <- names(MA@PrimerPairsSet)
     initialize(MA, mergers = mergers)
 }
@@ -239,6 +256,7 @@ mergeMulti <- function(MA, mc.cores=getOption("mc.cores", 1L), ...){
 ##'     filled
 ##' @importFrom dada2 makeSequenceTable
 ##' @importFrom parallel mclapply
+##' @importFrom parallel parLapply
 ##' @export
 ##' @author Emanuel Heitlinger
 makeSequenceTableMulti <- function(MA, mc.cores=getOption("mc.cores", 1L), ...){
@@ -248,11 +266,18 @@ makeSequenceTableMulti <- function(MA, mc.cores=getOption("mc.cores", 1L), ...){
     ## hack to remove mergers of length 1 which don't get properly
     ## named dataframes    
     mergers[unlist(lapply(mergers, length ))==1] <- list(list())
-    sequenceTable <- mclapply(seq_along(mergers), function (i){
+    f <- function (i){
         args.here <- lapply(exp.args, "[", i)
         .paramMessage("makeSequenceTable", args.here)
         do.call(makeSequenceTable, c(list(mergers[[i]]), args.here))
-    }, mc.cores=mc.cores)
+    }
+    if (Sys.info()["sysname"] == "Windows") {
+      cl <- makeCluster(mc.cores)
+      sequenceTable <- parLapply(cl, seq_along(mergers), f)
+      stopCluster(cl)
+    }
+    else
+      sequenceTable <- mclapply(seq_along(mergers), f, mc.cores=mc.cores)
     names(sequenceTable) <- names(MA@PrimerPairsSet)
     initialize(MA, sequenceTable = sequenceTable)
 }
@@ -285,31 +310,29 @@ makeSequenceTableMulti <- function(MA, mc.cores=getOption("mc.cores", 1L), ...){
 ##'     \code{sequenceTableNoChime} filled
 ##' @importFrom dada2 removeBimeraDenovo
 ##' @importFrom parallel mclapply
+##' @importFrom parallel parLapply
 ##' @export
 ##' @author Emanuel Heitlinger
 removeChimeraMulti <- function(MA, mc.cores = getOption("mc.cores", 1L), ...){
     .complainWhenAbsent(MA, "sequenceTable")
     exp.args <- .extractEllipsis(list(...), nrow(MA))
-    sequenceTableNoChime <-
-    mclapply(seq_along(MA@sequenceTable), function (i) { 
-            if (nrow(MA@sequenceTable[[i]])>0 && ncol(MA@sequenceTable[[i]])>0){
-                args.here <- lapply(exp.args, "[", i)
-                .paramMessage("removeBimeraDenovo", args.here)
-                do.call(removeBimeraDenovo, c(list(MA@sequenceTable[[i]]), args.here))
-            } else {matrix(nrow=0, ncol=0)}
-        },
-        mc.cores = mc.cores)
+    f <- function (i) { 
+        if (nrow(MA@sequenceTable[[i]])>0 && ncol(MA@sequenceTable[[i]])>0){
+            args.here <- lapply(exp.args, "[", i)
+            .paramMessage("removeBimeraDenovo", args.here)
+            do.call(removeBimeraDenovo, c(list(MA@sequenceTable[[i]]), args.here))
+        } else {matrix(nrow=0, ncol=0)}
+    }
+    if (Sys.info()["sysname"] == "Windows") {
+      cl <- makeCluster(mc.cores)
+      sequenceTableNoChime <- parLapply(cl, seq_along(MA@sequenceTable), f)
+      stopCluster(cl)
+    }
+    else
+      sequenceTableNoChime <- mclapply(seq_along(MA@sequenceTable), f, mc.cores = mc.cores)
     names(sequenceTableNoChime) <- MA@PrimerPairsSet@names
     initialize(MA, sequenceTableNoChime = sequenceTableNoChime)
 }
-
-
-
-
-
-
-
-
 
 ##' Calculate the proportion of merged sequences for a MultiAmplicon
 ##' object.
